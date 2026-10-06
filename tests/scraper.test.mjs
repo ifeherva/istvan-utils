@@ -132,6 +132,24 @@ describe("catalog discovery and updates", () => {
     assert.equal(api.calls.some((call) => call.init.method === "POST"), false);
   });
 
+  it("waits the configured delay between tournament pages, including after a failed page", async () => {
+    const api = mockApi([[event("first"),
+      event("second", { registration_url: SOURCE.replace("12312", "999") })], []]);
+    const original = api.fetchImpl;
+    const sequence = [];
+    api.fetchImpl = async (url, init) => {
+      if (new URL(url).hostname === "member.usafencing.org") {
+        sequence.push(String(url));
+        if (String(url) === SOURCE) return new Response("denied", { status: 403 });
+      }
+      return original(url, init);
+    };
+    await runScraper({ ...CONFIG, delayMs: 180000 }, options(api, {
+      dryRun: true, sleepImpl: async (ms) => { sequence.push(ms); },
+    }));
+    assert.deepEqual(sequence, [SOURCE, 180000, SOURCE.replace("12312", "999")]);
+  });
+
   it("preserves stored counts for a failed page and refreshes partial successes", async () => {
     const api = mockApi([[event("first"), event("second", { registration_url: SOURCE.replace("12312", "999") })], []]);
     const original = api.fetchImpl;
@@ -194,11 +212,14 @@ describe("configuration and HTTP", () => {
     const env = { SUPABASE_URL: CONFIG.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: "legacy-test-key" };
     assert.throws(() => getConfig(env), /EVENT_REVALIDATION_SECRET/);
     assert.equal(getConfig(env, { dryRun: true }).key, "legacy-test-key");
+    assert.equal(getConfig(env, { dryRun: true }).delayMs, 180000);
+    assert.equal(getConfig({ ...env, SCRAPER_DELAY_MS: "240000" }, { dryRun: true }).delayMs, 240000);
+    assert.equal(getConfig({ ...env, SCRAPER_DELAY_MS: "0" }, { dryRun: true }).delayMs, 0);
     assert.throws(() => getConfig({ ...env, SCRAPER_LIMIT: "1garbage" }, { dryRun: true }), /non-negative integer/);
     assert.throws(() => getConfig({ ...env, SCRAPER_TIME_ZONE: "invalid" }, { dryRun: true }));
   });
 
-  it("retries rate limits and transient failures, with bounded delay and timeout", async () => {
+  it("honors Retry-After on rate limits, with retry backoff and timeout", async () => {
     const responses = [new Response("rate limited", { status: 429, headers: { "retry-after": "3600" } }),
       new Response("unavailable", { status: 503 }), new Response("ok")];
     const delays = [];
@@ -208,7 +229,28 @@ describe("configuration and HTTP", () => {
       return responses.shift();
     }, sleepImpl: async (ms) => { delays.push(ms); } });
     assert.equal(await (await request(SOURCE, {}, "Test")).text(), "ok");
-    assert.deepEqual(delays, [30000, 2000]);
+    assert.deepEqual(delays, [3600000, 2000]);
+  });
+
+  it("waits at least the configured USA Fencing delay for every retry", async () => {
+    const api = mockApi([[event("valid")], []]);
+    const original = api.fetchImpl;
+    const delays = [];
+    let attempts = 0;
+    api.fetchImpl = async (url, init) => {
+      if (String(url) === SOURCE) {
+        attempts += 1;
+        if (attempts === 1) throw new Error("network failure");
+        if (attempts === 2) return new Response("unavailable", { status: 503 });
+      }
+      return original(url, init);
+    };
+    const summary = await runScraper({ ...CONFIG, delayMs: 180000 }, options(api, {
+      dryRun: true, sleepImpl: async (ms) => { delays.push(ms); },
+    }));
+    assert.equal(summary.errors, 0);
+    assert.equal(attempts, 3);
+    assert.deepEqual(delays, [180000, 180000]);
   });
 
   it("doesn't retry permanent denials or print response bodies", async () => {

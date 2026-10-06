@@ -29,7 +29,8 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Allow the full hosted-runner window for the pauses between tournament pages.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -48,7 +49,7 @@ jobs:
           EVENT_REVALIDATION_SECRET: ${{ secrets.EVENT_REVALIDATION_SECRET }}
           EVENT_REVALIDATION_SITE_URL: ${{ vars.EVENT_REVALIDATION_SITE_URL || 'https://fencingcalendar.com' }}
           SCRAPER_TIME_ZONE: ${{ vars.SCRAPER_TIME_ZONE || 'America/New_York' }}
-          SCRAPER_DELAY_MS: ${{ vars.SCRAPER_DELAY_MS || '1000' }}
+          SCRAPER_DELAY_MS: ${{ vars.SCRAPER_DELAY_MS || '180000' }}
           SCRAPER_LIMIT: ${{ inputs.limit || '0' }}
           DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
         run: |

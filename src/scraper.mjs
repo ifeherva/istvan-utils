@@ -37,7 +37,7 @@ export function getConfig(env = process.env, { dryRun = false } = {}) {
     revalidationSecret,
     siteUrl: httpsUrl(env.EVENT_REVALIDATION_SITE_URL || "https://fencingcalendar.com", "EVENT_REVALIDATION_SITE_URL"),
     timeZone,
-    delayMs: integerOption(env.SCRAPER_DELAY_MS, "SCRAPER_DELAY_MS", 1000),
+    delayMs: integerOption(env.SCRAPER_DELAY_MS, "SCRAPER_DELAY_MS", 180000),
     limit: integerOption(env.SCRAPER_LIMIT, "SCRAPER_LIMIT", 0),
   };
 }
@@ -51,7 +51,7 @@ export function calendarDate(now, timeZone) {
 }
 
 export function createHttp({ fetchImpl = fetch, sleepImpl = sleep } = {}) {
-  return async function request(url, init, label) {
+  return async function request(url, init, label, { minRetryDelayMs = 0 } = {}) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       let response;
       try {
@@ -60,7 +60,7 @@ export function createHttp({ fetchImpl = fetch, sleepImpl = sleep } = {}) {
         });
       } catch {
         if (attempt === 2) throw new Error(`${label}: request failed or timed out`);
-        await sleepImpl(1000 * 2 ** attempt);
+        await sleepImpl(Math.max(minRetryDelayMs, 1000 * 2 ** attempt));
         continue;
       }
       if (response.ok) return response;
@@ -70,9 +70,14 @@ export function createHttp({ fetchImpl = fetch, sleepImpl = sleep } = {}) {
         // Response bodies can contain credentials or challenge HTML; don't log them.
         throw new Error(`${label}: HTTP ${response.status}`);
       }
-      const retryAfter = Number(response.headers.get("retry-after"));
-      const delay = Math.max(1000 * 2 ** attempt,
-        Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 30000) : 0);
+      const retryAfterHeader = response.headers.get("retry-after");
+      const retryAfterSeconds = Number(retryAfterHeader);
+      const retryAfterMs = Number.isFinite(retryAfterSeconds)
+        ? retryAfterSeconds * 1000
+        : Date.parse(retryAfterHeader) - Date.now();
+      // Never retry before Retry-After, including when the server sends an HTTP date.
+      const delay = Math.max(minRetryDelayMs, 1000 * 2 ** attempt,
+        Number.isFinite(retryAfterMs) ? retryAfterMs : 0);
       await response.body?.cancel();
       await sleepImpl(delay);
     }
@@ -150,7 +155,7 @@ export async function runScraper(config, {
     try {
       const response = await request(sourceUrl, {
         headers: { accept: "text/html,application/xhtml+xml", "user-agent": "FencingCalendarBot/1.0 (+https://fencingcalendar.com)" },
-      }, "Fetch USA Fencing tournament");
+      }, "Fetch USA Fencing tournament", { minRetryDelayMs: config.delayMs });
       const participation = buildParticipation(sourceUrl, await response.text());
       const records = calendarEvents.map((event) => ({
         event_id: event.id,
