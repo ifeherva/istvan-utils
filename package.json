@@ -1,0 +1,11 @@
+{
+  "name": "usa-fencing-spots-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "scrape": "node src/cli.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

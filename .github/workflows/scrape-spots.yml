@@ -1,0 +1,59 @@
+name: Refresh USA Fencing spots
+
+# The external scheduler calls GitHub's workflow dispatch API:
+# POST /repos/OWNER/REPO/actions/workflows/scrape-spots.yml/dispatches
+# Body: {"ref":"main"} (use this repository's actual default branch).
+# Its GitHub token needs Actions: write. Supabase credentials stay in GitHub secrets.
+# Put this folder's CONTENTS at the new repository root so GitHub discovers this file.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Scrape and validate without database writes or cache refresh
+        type: boolean
+        default: false
+      limit:
+        description: Maximum eligible calendar rows (0 means all)
+        type: string
+        default: '0'
+  repository_dispatch:
+    types: [refresh-usa-fencing-spots]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: usa-fencing-spots
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      # No install step: the scraper and tests use only Node's standard library.
+      - name: Test scraper
+        run: npm test
+      - name: Scrape upcoming U.S. events
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          EVENT_REVALIDATION_SECRET: ${{ secrets.EVENT_REVALIDATION_SECRET }}
+          EVENT_REVALIDATION_SITE_URL: ${{ vars.EVENT_REVALIDATION_SITE_URL || 'https://fencingcalendar.com' }}
+          SCRAPER_TIME_ZONE: ${{ vars.SCRAPER_TIME_ZONE || 'America/New_York' }}
+          SCRAPER_DELAY_MS: ${{ vars.SCRAPER_DELAY_MS || '1000' }}
+          SCRAPER_LIMIT: ${{ inputs.limit || '0' }}
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            npm run scrape -- --dry-run
+          else
+            npm run scrape
+          fi
