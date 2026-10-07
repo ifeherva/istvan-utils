@@ -1,0 +1,26 @@
+name: Invalidate website events cache
+
+# Run from Actions > Invalidate website events cache > Run workflow.
+# This only calls the website's cache endpoint. No scraper or Supabase credentials required.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  invalidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Invalidate events cache
+        env:
+          EVENT_REVALIDATION_SECRET: ${{ secrets.EVENT_REVALIDATION_SECRET }}
+          EVENT_REVALIDATION_SITE_URL: ${{ vars.EVENT_REVALIDATION_SITE_URL || 'https://www.fencingcalendar.com' }}
+        run: npm run invalidate

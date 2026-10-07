@@ -47,7 +47,7 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           EVENT_REVALIDATION_SECRET: ${{ secrets.EVENT_REVALIDATION_SECRET }}
-          EVENT_REVALIDATION_SITE_URL: ${{ vars.EVENT_REVALIDATION_SITE_URL || 'https://fencingcalendar.com' }}
+          EVENT_REVALIDATION_SITE_URL: ${{ vars.EVENT_REVALIDATION_SITE_URL || 'https://www.fencingcalendar.com' }}
           SCRAPER_TIME_ZONE: ${{ vars.SCRAPER_TIME_ZONE || 'America/New_York' }}
           SCRAPER_DELAY_MS: ${{ vars.SCRAPER_DELAY_MS || '180000' }}
           SCRAPER_LIMIT: ${{ inputs.limit || '0' }}

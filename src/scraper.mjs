@@ -21,21 +21,28 @@ function httpsUrl(value, name) {
   return url.origin;
 }
 
+export function getCacheConfig(env = process.env, { required = true } = {}) {
+  const revalidationSecret = env.EVENT_REVALIDATION_SECRET?.trim();
+  if (required && !revalidationSecret) {
+    throw new Error("EVENT_REVALIDATION_SECRET is required to refresh the website cache");
+  }
+  return {
+    revalidationSecret,
+    siteUrl: httpsUrl(env.EVENT_REVALIDATION_SITE_URL || "https://www.fencingcalendar.com", "EVENT_REVALIDATION_SITE_URL"),
+  };
+}
+
 export function getConfig(env = process.env, { dryRun = false } = {}) {
   const key = env.SUPABASE_SECRET_KEY?.trim() || env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!key) throw new Error("SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY) is required");
-  const revalidationSecret = env.EVENT_REVALIDATION_SECRET?.trim();
-  if (!dryRun && !revalidationSecret) {
-    throw new Error("EVENT_REVALIDATION_SECRET is required to refresh the website cache after writes");
-  }
+  const cacheConfig = getCacheConfig(env, { required: !dryRun });
   const timeZone = env.SCRAPER_TIME_ZONE?.trim() || "America/New_York";
   // Validate before any network requests or writes.
   new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
   return {
     supabaseUrl: httpsUrl(env.SUPABASE_URL, "SUPABASE_URL"),
     key,
-    revalidationSecret,
-    siteUrl: httpsUrl(env.EVENT_REVALIDATION_SITE_URL || "https://fencingcalendar.com", "EVENT_REVALIDATION_SITE_URL"),
+    ...cacheConfig,
     timeZone,
     delayMs: integerOption(env.SCRAPER_DELAY_MS, "SCRAPER_DELAY_MS", 180000),
     limit: integerOption(env.SCRAPER_LIMIT, "SCRAPER_LIMIT", 0),
@@ -56,7 +63,7 @@ export function createHttp({ fetchImpl = fetch, sleepImpl = sleep } = {}) {
       let response;
       try {
         response = await fetchImpl(url, {
-          ...init, redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS),
+          ...init, redirect: "manual", signal: AbortSignal.timeout(TIMEOUT_MS),
         });
       } catch {
         if (attempt === 2) throw new Error(`${label}: request failed or timed out`);
@@ -64,6 +71,10 @@ export function createHttp({ fetchImpl = fetch, sleepImpl = sleep } = {}) {
         continue;
       }
       if (response.ok) return response;
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel();
+        throw new Error(`${label}: HTTP ${response.status} redirect; configure the final destination URL`);
+      }
       const transient = response.status === 429 || response.status >= 500;
       if (!transient || attempt === 2) {
         await response.body?.cancel();
@@ -89,6 +100,16 @@ function supabaseHeaders(config) {
   // New sb_secret_* keys aren't JWTs. Only legacy JWT keys go in Authorization.
   if (!config.key.startsWith("sb_secret_")) headers.authorization = `Bearer ${config.key}`;
   return headers;
+}
+
+export async function invalidateEventsCache(config, request = createHttp()) {
+  const response = await request(`${config.siteUrl}/api/revalidate/events`, {
+    method: "POST", headers: { authorization: `Bearer ${config.revalidationSecret}` },
+  }, "Refresh website events cache");
+  const result = await response.json();
+  if (result.revalidated !== true || result.tag !== "events") {
+    throw new Error("Website did not confirm events cache revalidation");
+  }
 }
 
 async function discoverEvents(config, today, request) {
@@ -183,13 +204,7 @@ export async function runScraper(config, {
   // Refresh even after a partial success; failed pages never overwrite stored data.
   if (!dryRun && summary.updated > 0) {
     try {
-      const response = await request(`${config.siteUrl}/api/revalidate/events`, {
-        method: "POST", headers: { authorization: `Bearer ${config.revalidationSecret}` },
-      }, "Refresh website events cache");
-      const result = await response.json();
-      if (result.revalidated !== true || result.tag !== "events") {
-        throw new Error("Website did not confirm events cache revalidation");
-      }
+      await invalidateEventsCache(config, request);
       summary.revalidated = true;
     } catch (error) {
       summary.errors += 1;

@@ -6,6 +6,7 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "scrape": "node src/cli.mjs",
+    "invalidate": "node src/invalidate.mjs",
     "test": "node --test tests/*.test.mjs"
   }
 }

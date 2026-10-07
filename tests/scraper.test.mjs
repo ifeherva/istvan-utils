@@ -212,6 +212,7 @@ describe("configuration and HTTP", () => {
     const env = { SUPABASE_URL: CONFIG.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: "legacy-test-key" };
     assert.throws(() => getConfig(env), /EVENT_REVALIDATION_SECRET/);
     assert.equal(getConfig(env, { dryRun: true }).key, "legacy-test-key");
+    assert.equal(getConfig(env, { dryRun: true }).siteUrl, "https://www.fencingcalendar.com");
     assert.equal(getConfig(env, { dryRun: true }).delayMs, 180000);
     assert.equal(getConfig({ ...env, SCRAPER_DELAY_MS: "240000" }, { dryRun: true }).delayMs, 240000);
     assert.equal(getConfig({ ...env, SCRAPER_DELAY_MS: "0" }, { dryRun: true }).delayMs, 0);
@@ -224,7 +225,7 @@ describe("configuration and HTTP", () => {
       new Response("unavailable", { status: 503 }), new Response("ok")];
     const delays = [];
     const request = createHttp({ fetchImpl: async (_url, init) => {
-      assert.equal(init.redirect, "error");
+      assert.equal(init.redirect, "manual");
       assert.ok(init.signal instanceof AbortSignal);
       return responses.shift();
     }, sleepImpl: async (ms) => { delays.push(ms); } });
@@ -260,6 +261,22 @@ describe("configuration and HTTP", () => {
       return new Response("sensitive payload", { status: 403 });
     } });
     await assert.rejects(request(SOURCE, {}, "Test"), { message: "Test: HTTP 403" });
+    assert.equal(attempts, 1);
+  });
+
+  it("reports redirects explicitly without retrying or forwarding credentials", async () => {
+    let attempts = 0;
+    const request = createHttp({ fetchImpl: async (_url, init) => {
+      attempts += 1;
+      assert.equal(init.redirect, "manual");
+      return new Response(null, { status: 308,
+        headers: { location: "https://www.fencingcalendar.com/api/revalidate/events" } });
+    } });
+    await assert.rejects(request("https://fencingcalendar.com/api/revalidate/events", {
+      method: "POST", headers: { authorization: "Bearer test-secret" },
+    }, "Refresh website events cache"), {
+      message: "Refresh website events cache: HTTP 308 redirect; configure the final destination URL",
+    });
     assert.equal(attempts, 1);
   });
 });
