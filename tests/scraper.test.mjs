@@ -15,6 +15,7 @@ const CONFIG = getConfig({
 const HTML = `
   <div class="card contested-event" data-event_id="72959">
     <span class="short-code"><span><span class="name">Junior Men&rsquo;s Foil (JNRMF)</span></span></span>
+    <a href="https://www.usafencing.org/age-classification-eligibility"><span class="link"><i class="fa fa-angle-right"></i> Possible A1</span></a>
     <div>This event has a registration cap in place.</div>
     <a><span class="entrant-count mono">28</span></a>
     <div><div><strong>28</strong> Official Competitors</div><div><strong>84</strong> Open Spots</div></div>
@@ -53,9 +54,9 @@ describe("participation payload", () => {
     assert.deepEqual(buildParticipation(`${SOURCE}?tracking=1`, HTML, NOW.toISOString()), {
       source: "usa_fencing", sourceUrl: SOURCE, scrapedAt: NOW.toISOString(), events: [
         { code: "JNRMF", name: "Junior Men's Foil", usaFencingEventId: "72959", registered: 28,
-          openSpots: 84, capacity: 112, registrationCap: true, isFull: false },
+          openSpots: 84, capacity: 112, registrationCap: true, isFull: false, possibleRating: "A1" },
         { code: "Y14WS", name: "Youth 14 Women’s Saber", usaFencingEventId: "72940", registered: 91,
-          openSpots: 0, capacity: 91, registrationCap: false, isFull: true },
+          openSpots: 0, capacity: 91, registrationCap: false, isFull: true, possibleRating: null },
       ],
     });
   });
@@ -69,6 +70,26 @@ describe("participation payload", () => {
     assert.equal(entry.registered, 1234);
     assert.equal(entry.openSpots, null);
     assert.equal(entry.capacity, null);
+  });
+
+  it("captures possible ratings per event, including Not Rated and missing labels", () => {
+    const card = (id, ratingHtml) => `<div data-event_id="${id}" class="contested-event">
+      <span class="name">Junior Men’s Foil (JNRMF)</span>
+      <span class="entrant-count mono">2</span>
+      ${ratingHtml}
+    </div>`;
+    const html = card("1", `<a href="https://www.usafencing.org/age-classification-eligibility">
+        <span class="link"><i class="fa fa-angle-right"></i> Possible&nbsp;<strong>B2</strong></span>
+      </a>`) + card("2", "") + card("3", `<a><span>Possible Not&#32;Rated</span></a>`)
+      + card("4", "") + `<footer><a>Possible A4</a></footer>`;
+    assert.deepEqual(buildParticipation(SOURCE, html).events.map((entry) => ({
+      id: entry.usaFencingEventId, possibleRating: entry.possibleRating,
+    })), [
+      { id: "1", possibleRating: "B2" },
+      { id: "2", possibleRating: null },
+      { id: "3", possibleRating: "Not Rated" },
+      { id: "4", possibleRating: null },
+    ]);
   });
 
   it("rejects empty pages, incomplete cards, and partial parsing", () => {
@@ -115,6 +136,10 @@ describe("catalog discovery and updates", () => {
     assert.equal(write.url.searchParams.get("on_conflict"), "event_id");
     assert.equal(write.init.headers.prefer, "resolution=merge-duplicates,return=minimal");
     assert.deepEqual(JSON.parse(write.init.body).map((record) => record.event_id), ["today", "future"]);
+    // Ratings travel inside each event's JSON entry all the way to the upsert.
+    for (const record of JSON.parse(write.init.body)) {
+      assert.deepEqual(record.participation.events.map((entry) => entry.possibleRating), ["A1", null]);
+    }
     const refresh = api.calls.at(-1);
     assert.equal(refresh.url.pathname, "/api/revalidate/events");
     assert.equal(refresh.init.headers.authorization, `Bearer ${CONFIG.revalidationSecret}`);

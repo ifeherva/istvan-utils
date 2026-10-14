@@ -83,6 +83,17 @@ function numberBeforeLabel(block, label) {
   return value === undefined ? null : Number.parseInt(value.replace(/,/g, ""), 10);
 }
 
+function possibleRating(block) {
+  // USA Fencing displays the classification as a link such as "Possible A1"
+  // or "Possible Not Rated". Keep "Not Rated" distinct from a missing label.
+  for (const match of block.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const text = clean(decodeEntities(stripTags(match[1])));
+    const rating = text.match(/^Possible\s+(.+)$/i)?.[1];
+    if (rating) return rating;
+  }
+  return null;
+}
+
 export function buildParticipation(sourceUrl, html, scrapedAt = new Date().toISOString()) {
   const canonicalUrl = canonicalTournamentUrl(sourceUrl);
   if (!canonicalUrl) throw new Error("Invalid USA Fencing tournament URL");
@@ -103,6 +114,7 @@ export function buildParticipation(sourceUrl, html, scrapedAt = new Date().toISO
       code,
       name: clean(displayName.replace(/\s*\([A-Z0-9]{4,8}\)\s*$/, "")),
       usaFencingEventId: eventId,
+      possibleRating: possibleRating(block),
       registered,
       openSpots,
       capacity: registered === null || openSpots === null ? null : registered + openSpots,
